@@ -4,20 +4,17 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 import numpy as np
 import matplotlib.pyplot as plt
-import feature_synthesis as fs
+import feature_synthesis as fs #特征识别文件
 import itertools
 import random
-from tqdm import tqdm  # 显示进度条（可选，需安装：pip install tqdm）
+from tqdm import tqdm
 import joblib
 
-# 2. 加载数据
-# 注意：将 'game_data.csv' 替换为你的实际文件名，如果文件不在同一目录，则需要提供完整路径
-df = pd.read_csv('record - 副本.csv',encoding='gbk')  # df 现在就是你的数据表
+df = pd.read_csv('record - 副本.csv',encoding='gbk')  # 若两个文件不在同一文件夹，则需提供完整路径
 
 
-# 3. 准备特征(X)和目标(y)
-# 假设最后一列是目标，其他列都是特征
-X = df.drop(columns=['成绩'])   # ← 这就是 DataFrame
+# 3. 准备特征(X)和目标(y)，假设目标列是'成绩'
+X = df.drop(columns=['成绩'])   # DataFrame
 y = df['成绩']
 
 plt.hist(y, bins=50)
@@ -30,10 +27,10 @@ plt.show()
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # 5. 创建并训练随机森林模型
-# n_estimators=100: 表示森林里用100棵树，这是常用值
+# n_estimators=100: 森林里用100棵树
 # random_state=42: 固定随机种子，确保每次运行结果一致
 model = RandomForestRegressor(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)  # 这才是训练！把特征X_train和目标y_train喂给模型学习
+model.fit(X_train, y_train)  # 把特征X_train和目标y_train喂给模型学习
 
 joblib.dump(model, 'plant_model.pkl')
 joblib.dump(X.columns.tolist(), 'feature_columns.pkl')
@@ -41,15 +38,15 @@ joblib.dump(X.columns.tolist(), 'feature_columns.pkl')
 print("模型训练完成，特征顺序已锁定：")
 print(X.columns.tolist())
 
-# 6. 评估模型（看看模型在没见过的测试集上表现如何）
+# 6. 评估模型的泛化水平
 score = model.score(X_test, y_test)
 print(f"R^2 = {score:.4f}")
-# R^2分数越接近1，说明模型预测越准。首次运行有0.6~0.8就不错。
+# R^2分数越接近1，说明模型预测越准
 
-# 7. 查看特征重要性（这是你最需要的洞见！）
+# 7. 查看特征重要性
 importances = model.feature_importances_
 feature_names = X.columns
-# 将重要性和特征名组合并排序
+
 importance_df = pd.DataFrame({
     'feature': feature_names,
     'importance': importances
@@ -70,7 +67,7 @@ CONSTRAINT_PLANTS = {'坚', '高', '曾', '爆', '仙', '嘴', '玉'}
 ALLOWED_POSITIONS = [2, 3, 4]
 # 重要：build_features 输出的特征顺序必须与此列表严格一致
 
-# ========== 2. 特征构造函数（你需要自己补全）==========
+# ========== 2. 特征构造函数==========
 def build_features(lineup_list):
     """
     输入：阵容列表，如 ['狙','麦','坚','寒','嘴']（长度5）
@@ -153,16 +150,15 @@ def build_features(lineup_list):
 
 # ========== 3. 阵容生成器（随机采样/穷举）==========
 def generate_random_lineup():
-    """随机生成一个符合位置约束的有序阵容（允许重复）"""
+    """随机生成一个符合铲种的阵容（允许重复）"""
     while True:
         lineup = [random.choice(PLANTS) for _ in range(5)]
-        # 检查约束：若约束植物出现在前两个位置，则重新生成
+        # 检查铲种：若前排出现在一号位或二号位，则重新生成
         for i, plant in enumerate(lineup[:2]):  # 只检查索引0,1
             if plant in CONSTRAINT_PLANTS:
                 # 出现在禁止位置，重新生成整个阵容
                 break
         else:
-            # 没有触发break，所有约束植物都不在前两位，合格
             return tuple(lineup)
 
 def generate_all_lineups():
@@ -177,7 +173,7 @@ def generate_all_lineups():
 def find():
     # ---------- 参数设置 ----------
     MODE = 'random'        # 'random' 或 'exhaustive'
-    N_SAMPLES = 3000  # 随机采样数量（根据你的算力调整，100万约几十秒到几分钟）
+    N_SAMPLES = 3000  # 随机采样数量，根据算力调整
     TOP_K = 35            # 输出前K个阵容
 
     # ---------- 生成阵容并预测 ----------
@@ -216,5 +212,6 @@ def find():
     # 可选：保存结果到CSV
     # df_out = pd.DataFrame(results, columns=['lineup', 'score'])
     # df_out.to_csv('top_lineups.csv', index=False)
+
 
 find()
