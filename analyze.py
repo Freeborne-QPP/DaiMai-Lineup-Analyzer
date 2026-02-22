@@ -1,217 +1,130 @@
-# 1. 导入工具包
+# 编写过程借助DeepSeek V3.2
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
 import numpy as np
-import matplotlib.pyplot as plt
-import feature_synthesis as fs #特征识别文件
-import itertools
-import random
-from tqdm import tqdm
 import joblib
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_squared_error
+import matplotlib.pyplot as plt
+from sklearn.impute import SimpleImputer
 
-df = pd.read_csv('record - 副本.csv',encoding='gbk')  # 若两个文件不在同一文件夹，则需提供完整路径
 
+# ==================== 配置部分 ====================
+DATA_PATH = 'record.csv'                # 训练数据文件路径
+TARGET_COL = '成绩'               # 目标列名
+TEST_SIZE = 0.2                             # 测试集比例
+RANDOM_STATE = 42                            # 随机种子
+MODEL_SAVE_PATH = 'gb_model.pkl'             # 模型保存路径
+FEATURE_SAVE_PATH = 'gb_feature_columns.pkl' # 特征列名保存路径
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 或 ['Arial Unicode MS']
+plt.rcParams['axes.unicode_minus'] = False
 
-# 3. 准备特征(X)和目标(y)，假设目标列是'成绩'
-X = df.drop(columns=['成绩'])   # DataFrame
-y = df['成绩']
+# 梯度提升模型参数（可按需调整）
+GB_PARAMS = {
 
-plt.hist(y, bins=50)
-plt.xlabel('Survived Time')
-plt.ylabel('Count')
-plt.title('MaiBan S6 SuiZhiyin ShiChang FenBu')
-plt.show()
+    'n_estimators': 1000,               # 增加到足够大的值
+    'learning_rate': 0.1,
+    'max_depth': 4,
+    'min_samples_split': 10,
+    'min_samples_leaf': 5,
+    'subsample': 0.8,
+    'validation_fraction': 0.1,          # 将训练集的 10% 作为验证集
+    'n_iter_no_change': 10,               # 连续 10 次迭代验证集损失无改善则停止
+    'tol': 1e-4,                          # 改善的容忍阈值
+    'random_state': RANDOM_STATE,
+    'verbose': 1                    # 训练时打印过程
+}
+# =================================================
 
-# 4. 划分训练集和测试集（用80%的数据训练，20%的数据验证模型效果）
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# 1. 加载数据
+df = pd.read_csv(DATA_PATH,encoding='gbk')
+print(f"数据加载成功，共 {df.shape[0]} 行，{df.shape[1]} 列")
 
-# 5. 创建并训练随机森林模型
-# n_estimators=100: 森林里用100棵树
-# random_state=42: 固定随机种子，确保每次运行结果一致
-model = RandomForestRegressor(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)  # 把特征X_train和目标y_train喂给模型学习
+# 2. 分离特征和目标
+print("实际列名：", df.columns.tolist())
+print("目标列名变量 TARGET_COL =", TARGET_COL)
+y = df[TARGET_COL]
+X_raw = df.drop(columns=['行','阵容','成绩'])
 
-joblib.dump(model, 'plant_model.pkl')
-joblib.dump(X.columns.tolist(), 'feature_columns.pkl')
+print(X_raw.columns)
+# 3. 特征类型识别与独热编码
+#   假设数值特征列名为 numerical_features，分类特征列名为 categorical_features
+#   请根据你的实际列名修改这两个列表！
+numerical_features = ['硬前排', '前排', '寒意', '火焰', '大C', '小C', '经验量', '对单',
+       '聚怪', '真群', '类机', '类星', '经验辅', '养嘴', '类核', '中期C', '最后输出', '最前防御',
+        '保护_寒意', '保护_火焰', '保护_大C', '保护_小C', '保护_对单',
+       '保护_聚怪', '保护_真群', '保护_类机', '保护_类星', '保护_经验辅', '保护_类核', '保护_中期C', '狙数',
+       '麦数', '坚数', '雷数', '寒数', '嘴数', '双数', '小数', '阳数', '喷数', '魅数', '川数', '三数',
+       '缠数', '火数', '高数', '海数', '灯数', '仙数', '叶数', '裂数', '星数', '磁数', '卷数', '玉数',
+       '蒜数', '伞数', '金数', '瓜数', '机数', '曾数', '猫数', '冰数', '吸数', '刺数', '爆数', '飘数',
+       '反数', '若数', '奶数', '幽数', '逆数', '藤数', '前窝', '后胆'] 
+categorical_features = ['公式阵','是否边','一号抗', '二号抗', '三号抗','四号抗']  # ,'plant_1','plant_2','plant_3','plant_4','plant_5'
 
-print("模型训练完成，特征顺序已锁定：")
-print(X.columns.tolist())
+# 确保列名存在于数据中
+available_num = [col for col in numerical_features if col in X_raw.columns]
+available_cat = [col for col in categorical_features if col in X_raw.columns]
+print(f"实际使用的数值特征: {available_num}")
+print(f"实际使用的分类特征: {available_cat}")
 
-# 6. 评估模型的泛化水平
-score = model.score(X_test, y_test)
-print(f"R^2 = {score:.4f}")
-# R^2分数越接近1，说明模型预测越准
+# 对分类特征进行独热编码
+if available_cat:
+    X_encoded = pd.get_dummies(X_raw[available_cat], prefix_sep='_')
+    # 将编码后的分类特征与数值特征合并
+    X = pd.concat([X_raw[available_num], X_encoded], axis=1)
+else:
+    X = X_raw[available_num].copy()
 
-# 7. 查看特征重要性
+# 数值特征用中位数填充
+imputer = SimpleImputer(strategy='median')
+X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
+X = X_imputed
+
+# 4. 划分训练集和测试集
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+)
+print(f"训练集样本数: {X_train.shape[0]}, 测试集样本数: {X_test.shape[0]}")
+
+# 5. 训练梯度提升模型
+model = GradientBoostingRegressor(**GB_PARAMS)
+model.fit(X_train, y_train)
+print("模型训练完成")
+
+# 6. 评估模型
+y_train_pred = model.predict(X_train)
+y_test_pred = model.predict(X_test)
+
+train_r2 = r2_score(y_train, y_train_pred)
+test_r2 = r2_score(y_test, y_test_pred)
+train_rmse = np.sqrt(mean_squared_error(y_train, y_train_pred))
+test_rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
+
+print(f"\n=== 模型评估 ===")
+print(f"训练集 R²: {train_r2:.4f}, RMSE: {train_rmse:.2f}")
+print(f"测试集 R²: {test_r2:.4f}, RMSE: {test_rmse:.2f}")
+
+# 7. 特征重要性分析
 importances = model.feature_importances_
 feature_names = X.columns
-
 importance_df = pd.DataFrame({
     'feature': feature_names,
     'importance': importances
 }).sort_values('importance', ascending=False)
 
-print("\n特征重要性排名")
-print(importance_df.to_string(index=False))
+print("\n=== 特征重要性排名 (Top 15) ===")
+print(importance_df.head(15).to_string(index=False))
 
-FEATURE_COLUMNS = ['是否边','保护寒意','保护火焰','保护大C','保护小C','保护对单','保护聚怪','保护真群','保护类机','保护类星','保护经验辅','保护类核','寒意','火焰','硬前排','前排','公式阵','大C','小C','对单','聚怪','真群','类机','类星','经验辅','养嘴','类核','有无狙','有无麦','有无坚','有无雷','有无寒','有无嘴','有无双','有无小','有无阳','有无喷','有无魅','有无胆','有无川','有无窝','有无三','有无缠','有无火','有无高','有无海','有无灯','有无仙','有无叶','有无裂','有无星','有无磁','有无卷','有无玉','有无蒜','有无伞','有无金','有无瓜','有无机','有无曾','有无猫','有无冰','有无吸','有无刺','有无爆','有无飘','有无反','有无若','有无奶','有无幽','有无逆','有无藤']
-PLANTS = [
-    '狙', '麦', '坚', '雷', '寒', '嘴', '双', '小', '阳', '喷',
-    '魅', '胆', '川', '窝', '三', '缠', '火', '高', '海', '灯',
-    '仙', '叶', '裂', '星', '磁', '卷', '玉', '蒜', '伞', '金',
-    '瓜', '机', '曾', '猫', '冰', '吸', '刺', '爆', '飘', '反',
-    '若', '奶', '幽', '逆', '藤'
-]
-CONSTRAINT_PLANTS = {'坚', '高', '曾', '爆', '仙', '嘴', '玉'}
-ALLOWED_POSITIONS = [2, 3, 4]
-# 重要：build_features 输出的特征顺序必须与此列表严格一致
+# 可选：绘制特征重要性条形图
+plt.figure(figsize=(10, 6))
+plt.barh(importance_df['feature'][:15], importance_df['importance'][:15])
+plt.xlabel('Importance')
+plt.title('Top 15 Feature Importances (Gradient Boosting)')
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
 
-# ========== 2. 特征构造函数==========
-def build_features(lineup_list):
-    """
-    输入：阵容列表，如 ['狙','麦','坚','寒','嘴']（长度5）
-    输出：包含所有特征值的字典
-    """
-    # 将列表拼接成字符串，供feature_synthesis使用
-    lineup_str = ''.join(lineup_list)
-    leihe= fs.count_chars(lineup_str, ['卷', '飘'])
-    leihe+= fs.count_chars(lineup_str[:2:], ['胆'])
-    count_plant=[0 for i in range(45)]
-    for i in range(len(PLANTS)):
-        count_plant[i] = fs.count_chars(lineup_str, [PLANTS[i]])
-    return {
-        '是否边': 0,  # 固定
-        '寒意': fs.count_chars(lineup_str, ['寒', '冰', '川']),
-        '火焰': fs.count_fire(lineup_str),
-        '硬前排': 1 if (fs.contain(lineup_str, ['曾', '爆', '仙', '坚', '高', '嘴']) or
-                        fs.dengci(lineup_str,
-                                  ['海', '磁', '玉', '蒜', '逆', '伞', '狙', '川', '吸', '奶', '藤'])) else 0,
-        '前排': 1 if fs.contain(lineup_str, ['曾', '爆', '仙', '坚', '高', '嘴', '狙', '川', '海', '灯',
-                                             '磁', '玉', '蒜', '伞', '吸', '奶', '逆', '藤']) else 0,
-        '公式阵': 1 if fs.gongshi(lineup_str) else 0,
-        '大C': fs.count_chars(lineup_str, ['雷', '阳', '喷', '瓜', '机', '曾']),
-        '小C': fs.count_chars(lineup_str, ['寒', '双', '小', '胆', '窝', '三', '海',
-                                           '裂', '星', '卷', '猫', '飘', '反', '若', '奶', '幽']),
-        '对单': fs.count_chars(lineup_str, ['寒', '海', '玉', '阳', '缠']),
-        '聚怪': fs.count_chars(lineup_str, ['寒', '魅', '川', '缠', '高', '玉', '冰', '刺', '逆']),
-        '真群': fs.count_chars(lineup_str, ['雷', '双', '阳', '喷', '窝', '火', '瓜',
-                                            '曾', '爆', '飘', '反', '若', '奶', '幽', '藤']),
-        '类机': fs.count_chars(lineup_str, ['双', '小', '胆', '裂', '机', '反', '幽']),
-        '类星': fs.count_chars(lineup_str, ['阳', '裂', '星', '磁', '曾', '猫', '反', '藤']),
-        '经验辅': fs.count_chars(lineup_str, ['麦','三','吸','曾','猫']),
-        '类核': leihe,
-        '有无狙': count_plant[0],
-        '有无麦': count_plant[1],
-        '有无坚': count_plant[2],
-        '有无雷': count_plant[3],
-        '有无寒': count_plant[4],
-        '有无嘴': count_plant[5],      # 第6项
-        '有无双': count_plant[6],      # 第7项
-        '有无小': count_plant[7],      # 第8项
-        '有无阳': count_plant[8],      # 第9项
-        '有无喷': count_plant[9],      # 第10项
-        '有无魅': count_plant[10],     # 第11项
-        '有无胆': count_plant[11],     # 第12项
-        '有无川': count_plant[12],     # 第13项
-        '有无窝': count_plant[13],     # 第14项
-        '有无三': count_plant[14],     # 第15项
-        '有无缠': count_plant[15],     # 第16项
-        '有无火': count_plant[16],     # 第17项
-        '有无高': count_plant[17],     # 第18项
-        '有无海': count_plant[18],     # 第19项
-        '有无灯': count_plant[19],     # 第20项
-        '有无仙': count_plant[20],     # 第21项
-        '有无叶': count_plant[21],     # 第22项
-        '有无裂': count_plant[22],     # 第23项
-        '有无星': count_plant[23],     # 第24项
-        '有无磁': count_plant[24],     # 第25项
-        '有无卷': count_plant[25],     # 第26项
-        '有无玉': count_plant[26],     # 第27项
-        '有无蒜': count_plant[27],     # 第28项
-        '有无伞': count_plant[28],     # 第29项
-        '有无金': count_plant[29],     # 第30项
-        '有无瓜': count_plant[30],     # 第31项
-        '有无机': count_plant[31],     # 第32项
-        '有无曾': count_plant[32],     # 第33项
-        '有无猫': count_plant[33],     # 第34项
-        '有无冰': count_plant[34],     # 第35项
-        '有无吸': count_plant[35],     # 第36项
-        '有无刺': count_plant[36],     # 第37项
-        '有无爆': count_plant[37],     # 第38项
-        '有无飘': count_plant[38],     # 第39项
-        '有无反': count_plant[39],     # 第40项
-        '有无若': count_plant[40],     # 第41项
-        '有无奶': count_plant[41],     # 第42项
-        '有无幽': count_plant[42],     # 第43项
-        '有无逆': count_plant[43],     # 第44项
-        '有无藤': count_plant[44]      # 第45项
-    }
-
-# ========== 3. 阵容生成器（随机采样/穷举）==========
-def generate_random_lineup():
-    """随机生成一个符合铲种的阵容（允许重复）"""
-    while True:
-        lineup = [random.choice(PLANTS) for _ in range(5)]
-        # 检查铲种：若前排出现在一号位或二号位，则重新生成
-        for i, plant in enumerate(lineup[:2]):  # 只检查索引0,1
-            if plant in CONSTRAINT_PLANTS:
-                # 出现在禁止位置，重新生成整个阵容
-                break
-        else:
-            return tuple(lineup)
-
-def generate_all_lineups():
-    """穷举生成所有符合约束的有序阵容（慎用！50^5≈3.1亿，极慢）"""
-    for prod in itertools.product(PLANTS, repeat=5):
-        # 检查前两个位置是否有约束植物
-        if any(p in CONSTRAINT_PLANTS for p in prod[:2]):
-            continue
-        yield prod
-
-# ========== 4. 主搜索程序 ==========
-def find():
-    # ---------- 参数设置 ----------
-    MODE = 'random'        # 'random' 或 'exhaustive'
-    N_SAMPLES = 3000  # 随机采样数量，根据算力调整
-    TOP_K = 35            # 输出前K个阵容
-
-    # ---------- 生成阵容并预测 ----------
-    results = []
-
-    if MODE == 'exhaustive':
-        print("开始穷举搜索...（可能极慢）")
-        generator = generate_all_lineups()
-        # 加上进度条（不知道总数，无法显示百分比）
-        for lineup in generator:
-            features = build_features(lineup)
-            # predict要求2D数组，我们构造一行DataFrame
-            X_pred = pd.DataFrame([features], columns=FEATURE_COLUMNS)
-            score = model.predict(X_pred)[0]
-            results.append((lineup, score))
-        print(f"穷举完成，共评估 {len(results)} 个阵容")
-
-    else:  # 随机采样
-        print(f"开始随机采样，目标数量 {N_SAMPLES} ...")
-        for _ in tqdm(range(N_SAMPLES), desc="评估阵容"):
-            lineup = generate_random_lineup()
-            lineuplist=list(lineup)
-            features = build_features(lineuplist)
-            X_pred = pd.DataFrame([features], columns=FEATURE_COLUMNS)
-            score = model.predict(X_pred)[0]
-            results.append((lineup, score))
-        print(f"随机采样完成，共评估 {len(results)} 个阵容")
-
-    # ---------- 排序并输出Top K ----------
-    results.sort(key=lambda x: x[1], reverse=True)
-    print(f"\n=== AI预测强度前 {TOP_K} 的阵容 ===\n")
-    for i, (lineup, score) in enumerate(results[:TOP_K], 1):
-        lineup_str = ' '.join(lineup)
-        print(f"{i:2d}. 阵容: {lineup_str}  预测成绩 {score:.2f} ")
-
-    # 可选：保存结果到CSV
-    # df_out = pd.DataFrame(results, columns=['lineup', 'score'])
-    # df_out.to_csv('top_lineups.csv', index=False)
-
-
-find()
+# 8. 保存模型和特征列名
+joblib.dump(model, MODEL_SAVE_PATH)
+joblib.dump(X.columns.tolist(), FEATURE_SAVE_PATH)
+print(f"\n模型已保存至 {MODEL_SAVE_PATH}")
+print(f"特征列名已保存至 {FEATURE_SAVE_PATH}")
