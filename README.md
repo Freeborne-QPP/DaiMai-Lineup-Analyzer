@@ -1,0 +1,6 @@
+process:从测阵记录中提取出数据集
+record.csv:数据集
+feature:含有给阵容标注特征的模块
+feature_synthesis:给数据集里的阵容批量标注特征
+RandomForest:用随机森林方法训练模型
+gradient_boosting:用梯度提升方法训练模型
